@@ -1,0 +1,26 @@
+# Python / Django
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.sqlite3
+backend/.env
+backend/staticfiles/
+backend/media/
+*.log
+
+# Node / Vite
+node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Tooling
+.tmp-shots/
+.DS_Store
+Thumbs.db
+
+# Deployment
+/.env
+/backups/*
+!/backups/.gitkeep

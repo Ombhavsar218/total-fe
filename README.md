@@ -28,11 +28,12 @@ single-page app styled with Tailwind CSS.
 | Layer     | Technology                                                                 |
 | --------- | -------------------------------------------------------------------------- |
 | Backend   | Django 5.2, Django REST Framework, SimpleJWT, django-cors-headers          |
-| Database  | SQLite by default; PostgreSQL via `DATABASE_URL`                           |
+| Database  | SQLite for local development; PostgreSQL in Docker Compose                 |
 | Frontend  | React 19, Vite 7, TypeScript, Tailwind CSS v4, React Router 7              |
 | Libraries | axios, react-hook-form, zod, recharts, lucide-react                        |
+| Deployment| Docker Compose, Gunicorn, Caddy, PostgreSQL, Let's Encrypt                 |
 
-## Quick start
+## Local development
 
 ### 1. Backend
 
