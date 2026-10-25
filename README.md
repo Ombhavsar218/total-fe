@@ -25,13 +25,13 @@ single-page app styled with Tailwind CSS.
 
 ## Stack
 
-| Layer     | Technology                                                                 |
-| --------- | -------------------------------------------------------------------------- |
-| Backend   | Django 5.2, Django REST Framework, SimpleJWT, django-cors-headers          |
-| Database  | SQLite for local development; PostgreSQL in Docker Compose                 |
-| Frontend  | React 19, Vite 7, TypeScript, Tailwind CSS v4, React Router 7              |
-| Libraries | axios, react-hook-form, zod, recharts, lucide-react                        |
-| Deployment| Docker Compose, Gunicorn, Caddy, PostgreSQL, Let's Encrypt                 |
+| Layer      | Technology                                                                  |
+| ---------- | --------------------------------------------------------------------------- |
+| Backend    | Django 5.2, Django REST Framework, SimpleJWT, django-cors-headers           |
+| Database   | SQLite for local development; PostgreSQL in Docker Compose or Render        |
+| Frontend   | React 19, Vite 7, TypeScript, Tailwind CSS v4, React Router 7               |
+| Libraries  | axios, react-hook-form, zod, recharts, lucide-react                         |
+| Deployment | Docker Compose, Render Blueprint, Gunicorn, Caddy, PostgreSQL, Let's Encrypt |
 
 ## Local development
 
@@ -198,6 +198,84 @@ For a local smoke test, set `DOMAIN=localhost`, `HTTP_PORT=8081` and `HTTPS_PORT
 open `https://localhost:8443` directly. Caddy will use its local CA, so the browser will show a
 certificate warning until you trust it; the HTTP-to-HTTPS redirect assumes the standard port 443.
 
+## Render deployment
+
+Render does not support `docker-compose.yml`. The checked-in `render.yaml` Blueprint creates:
+
+| Resource         | Purpose                                    |
+| ---------------- | ------------------------------------------ |
+| `totalstock-api` | Django + Gunicorn Docker web service       |
+| `totalstock-web` | React static site served from Render's CDN |
+| `totalstock-db`  | Render PostgreSQL                          |
+
+### Deploy
+
+1. Push the repository to GitHub or GitLab.
+2. In Render, choose **New → Blueprint**, select the repository, and apply `render.yaml`.
+3. When prompted, set the first admin credentials:
+   - `DJANGO_SUPERUSER_EMAIL`
+   - `DJANGO_SUPERUSER_PASSWORD`
+   `DJANGO_SECRET_KEY` is generated automatically by Render.
+4. Wait for both services to deploy. Verify `https://<api>.onrender.com/health/`, then open the static
+   site URL and sign in with the admin account.
+
+The API container runs migrations and `collectstatic` on every start; `initialDeployHook` creates
+the admin account once. If Render assigns different service names, update `CORS_ALLOWED_ORIGINS`,
+`CSRF_TRUSTED_ORIGINS` and `VITE_API_URL` in `render.yaml` to the generated URLs.
+
+If you add a custom domain later, update `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`,
+`CSRF_TRUSTED_ORIGINS` and the static site's `VITE_API_URL`, then redeploy the frontend.
+
+If the hook did not run, create the admin from a machine with access to the Render database:
+
+```bash
+cd backend
+export DATABASE_URL="<Render external connection string>"
+python manage.py createsuperuser
+```
+
+On PowerShell, use `$env:DATABASE_URL = "..."` instead.
+
+### Free-tier limits
+
+- Free web services spin down after 15 minutes without traffic, so the first request can take about
+  a minute.
+- Render's free PostgreSQL instance expires after roughly 30 days. For persistent data, use a paid
+  Render database or a free Neon database and set `DATABASE_URL` manually.
+- Free web services do not provide Shell access. Use the Django admin for account changes, or adjust
+  `initialDeployHook` for one-time setup tasks.
+
+### What the Blueprint configures
+
+- API Dockerfile: `backend/Dockerfile`; build context: `backend`.
+- Health check: `/health/`.
+- Render injects `PORT`; Gunicorn binds it automatically.
+- One-year HSTS is enabled on API responses and the static site; Render's edge handles the HTTPS
+  redirect.
+- `DB_CONN_MAX_AGE=0` and 2 Gunicorn workers / 2 threads fit the 512 MB free instance.
+- Static site build: `cd frontend && npm ci && npm run build`; publish: `frontend/dist`.
+- SPA rewrite: `/*` -> `/index.html`.
+- `VITE_API_URL` is baked into the frontend at build time.
+
+### Manual service setup without the Blueprint
+
+1. Create a **PostgreSQL** instance and copy its internal connection string.
+2. Create a **Web Service → Docker**:
+   - Dockerfile path: `backend/Dockerfile`
+   - Docker context: `backend`
+   - Health check path: `/health/`
+   - Add the environment variables from `render.yaml`, with `DATABASE_URL` set to the database
+     connection string.
+3. Create a **Static Site**:
+   - Root directory: `frontend`
+   - Build command: `npm ci && npm run build`
+   - Publish directory: `dist`
+   - Add `VITE_API_URL=https://<api>.onrender.com/api`
+   - Add rewrite `/*` -> `/index.html`
+
+Never point Render at `docker-compose.yml`; `x-logging` and the other top-level fields are Compose
+syntax, not Dockerfile instructions.
+
 ## Demo accounts
 
 Every seeded account uses the password **`password123`**.
@@ -306,7 +384,8 @@ deploy/
   frontend.Dockerfile
   backup.sh        nightly PostgreSQL dumps
 docker-compose.yml
-.env.example       deployment configuration template
+render.yaml        Render Blueprint: API, static site and PostgreSQL
+.env.example       Docker Compose deployment configuration template
 ```
 
 ## Operational notes
@@ -319,5 +398,3 @@ docker-compose.yml
   page-break controls.
 - Reset demo data: stop the server, delete `backend/db.sqlite3`, then run `migrate` and
   `seed_demo` again.
-#   t o t a l - f e  
- 
