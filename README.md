@@ -72,6 +72,132 @@ npm run build                   # type-check + bundle to dist/
 npm run preview
 ```
 
+## Docker Compose deployment
+
+The repository includes a production-oriented Docker Compose stack:
+
+| Service   | Purpose                                                                 |
+| --------- | ----------------------------------------------------------------------- |
+| `web`     | Caddy: serves the React build, terminates HTTPS, proxies `/api`, `/admin`, `/static` and `/health` to Django |
+| `backend` | Gunicorn + Django; applies migrations and collects static files on start |
+| `db`      | PostgreSQL with a persistent named volume                               |
+| `backup`  | Daily `pg_dump` files in `./backups` with retention                      |
+
+The frontend is built with `VITE_API_URL=/api`, so the API is same-origin in production. Caddy obtains
+and renews a Let's Encrypt certificate automatically once the hostname resolves to the server.
+
+### 1. Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+- `DOMAIN` — your public hostname, e.g. `totalstock.duckdns.org`.
+- `ACME_EMAIL` — an email address for Let's Encrypt expiry notices.
+- `DJANGO_ALLOWED_HOSTS` — normally the domain plus `localhost,127.0.0.1`.
+- `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` — `https://<your-domain>`.
+- `HSTS_HEADER` — leave `max-age=0` for local HTTP testing. After HTTPS works, enable HSTS, e.g.
+  `max-age=31536000; includeSubDomains`.
+- `DJANGO_SECRET_KEY` — generate with `openssl rand -hex 32`.
+- `POSTGRES_PASSWORD` — generate with `openssl rand -hex 24`. Keep it URL-safe
+  (letters, numbers, hyphen) because it is embedded in `DATABASE_URL`.
+
+Never commit `.env`.
+
+### 2. Start the stack
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f backend web
+```
+
+Open `https://<your-domain>`.
+
+Create a Django admin account:
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
+Optionally load demo data on a fresh, non-production database:
+
+```bash
+docker compose exec backend python manage.py seed_demo
+```
+
+### 3. Free hostname with DuckDNS
+
+1. Sign in at [duckdns.org](https://www.duckdns.org/), create a subdomain and copy its token.
+2. Point the subdomain at the server's public IPv4 address using the DuckDNS dashboard or the
+   update URL (`https://www.duckdns.org/update?domains=<name>&token=<token>&ip=`).
+3. Ensure inbound TCP ports **80** and **443** are open.
+4. Set `DOMAIN` in `.env`, then recreate Caddy:
+
+   ```bash
+   docker compose up -d --force-recreate web
+   ```
+
+Caddy requests the certificate automatically. A real domain can replace the DuckDNS name later by
+updating DNS and the three host/origin values in `.env`; no application code changes are needed.
+
+### 4. Oracle Cloud Always Free
+
+1. Create an **Ubuntu 24.04 ARM** VM (`VM.Standard.A1.Flex`, up to 2 OCPU / 12 GB while Always Free
+   capacity is available).
+2. Reserve a public IPv4 address and attach it to the VM.
+3. In the VCN security list or NSG, allow ingress TCP 80 and 443 from `0.0.0.0/0`; allow SSH only
+   from your own IP.
+4. SSH in, install Docker Engine and the Compose plugin using Docker's official Ubuntu instructions,
+   then copy or clone this repository.
+5. Create `.env`, start the stack, and point DuckDNS at the public IP.
+6. If `ufw` is enabled, run `sudo ufw allow 80/tcp` and `sudo ufw allow 443/tcp`.
+
+Capacity for free ARM instances is not guaranteed in every region or availability domain. Retry
+later or try another availability domain if provisioning fails.
+
+### 5. Operations
+
+```bash
+# Update and rebuild (migrations run automatically)
+git pull
+docker compose up -d --build
+
+# Logs
+docker compose logs -f --tail=100 backend web
+
+# Restart application containers
+docker compose restart backend web
+
+# Stop (keeps database and certificate volumes)
+docker compose down
+
+# Database shell
+docker compose exec db psql -U totalstock -d totalstock
+```
+
+> Do not run `docker compose down -v` unless you intend to delete the PostgreSQL database and Caddy
+> certificates.
+
+Backups are written to `./backups/totalstock-*.dump`. Copy them off the VM periodically (OCI Object
+Storage, another server, or your own machine). To restore:
+
+```bash
+docker compose stop backend web
+docker compose cp backups/<file>.dump db:/tmp/restore.dump
+docker compose exec db pg_restore --clean --if-exists --no-owner -U totalstock -d totalstock /tmp/restore.dump
+docker compose start backend web
+```
+
+The Compose stack starts with a fresh PostgreSQL database; existing SQLite data is not copied
+automatically. Use `seed_demo` for a demo, or export/import data deliberately.
+
+For a local smoke test, set `DOMAIN=localhost`, `HTTP_PORT=8081` and `HTTPS_PORT=8443` in `.env` and
+open `https://localhost:8443` directly. Caddy will use its local CA, so the browser will show a
+certificate warning until you trust it; the HTTP-to-HTTPS redirect assumes the standard port 443.
+
 ## Demo accounts
 
 Every seeded account uses the password **`password123`**.
@@ -166,6 +292,8 @@ backend/
   accounts/        custom email-based User, JWT auth, roles, user admin
   config/          settings, URL routing, pagination/date helpers, error envelope
   inventory/       shops, stock, bills, purchases, dashboard, profile, movements
+  Dockerfile       Gunicorn production image
+  entrypoint.sh    migrate + collectstatic + start Gunicorn
   manage.py
 frontend/
   src/components/  layout, UI primitives, bill/purchase forms, invoice renderers
@@ -173,6 +301,12 @@ frontend/
   src/services/    typed axios clients per resource
   src/contexts/    auth, theme and toast providers
   src/types/       shared API types
+deploy/
+  Caddyfile        HTTPS, SPA fallback and Django proxy
+  frontend.Dockerfile
+  backup.sh        nightly PostgreSQL dumps
+docker-compose.yml
+.env.example       deployment configuration template
 ```
 
 ## Operational notes

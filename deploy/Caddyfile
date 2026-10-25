@@ -6,7 +6,7 @@
 	encode zstd gzip
 
 	# Django admin and API (including WhiteNoise-served static files).
-	@backend path /api/* /admin/* /static/* /media/* /health/*
+	@backend path /api /api/* /admin /admin/* /static /static/* /media /media/* /health /health/*
 	handle @backend {
 		reverse_proxy backend:8000
 	}
@@ -26,6 +26,7 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "{$HSTS_HEADER:max-age=0}"
 		-Server
 	}
 }
